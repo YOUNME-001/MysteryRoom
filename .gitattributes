@@ -1,2 +1,48 @@
+# LFS 적용함
+# 터미널에서 아래 명령 필수 실행
+# git lfs install
+
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Unity text files
+*.cs diff=csharp
+*.shader text
+*.cginc text
+*.compute text
+
+*.unity text
+*.prefab text
+*.asset text
+*.mat text
+*.meta text
+*.anim text
+*.controller text
+
+# Image files
+*.png filter=lfs diff=lfs merge=lfs -text
+*.jpg filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.psd filter=lfs diff=lfs merge=lfs -text
+*.tga filter=lfs diff=lfs merge=lfs -text
+
+# Audio
+*.wav filter=lfs diff=lfs merge=lfs -text
+*.mp3 filter=lfs diff=lfs merge=lfs -text
+*.ogg filter=lfs diff=lfs merge=lfs -text
+
+# Video
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.mov filter=lfs diff=lfs merge=lfs -text
+
+# 3D models
+*.fbx filter=lfs diff=lfs merge=lfs -text
+*.blend filter=lfs diff=lfs merge=lfs -text
+*.obj filter=lfs diff=lfs merge=lfs -text
+
+# Fonts
+*.ttf filter=lfs diff=lfs merge=lfs -text
+*.otf filter=lfs diff=lfs merge=lfs -text
+
+# Unity packages
+*.unitypackage filter=lfs diff=lfs merge=lfs -text
