@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace MysteryRoom.Puzzle
@@ -18,6 +19,7 @@ namespace MysteryRoom.Puzzle
         public float unlockDistance = 4.0f; // 분리되기 위해 중심에서부터 떨어져야 하는 거리
 
         public PuzzlePiece parentPiece; // 이 조각이 의존하고 있는 부모 조각
+        public List<PuzzlePiece> dependentPieces = new List<PuzzlePiece>(); // 내가 풀려야 풀리는 자식 조각들
 
         private Camera mainCam;
         private bool isDragging = false;
@@ -27,18 +29,34 @@ namespace MysteryRoom.Puzzle
         {
             mainCam = Camera.main;
             
-            // 물리 강체(Rigidbody) 세팅
-            rb = gameObject.AddComponent<Rigidbody>();
+            // 기존에 Rigidbody가 프리팹에 이미 붙어있다면 가져오고, 없다면 새로 추가
+            rb = GetComponent<Rigidbody>();
+            if (rb == null)
+            {
+                rb = gameObject.AddComponent<Rigidbody>();
+            }
+
+            // 시작할 때는 무조건 물리적 튕김 분리(Pop)를 방지하기 위해 Kinematic으로 일단 묶어둠 (Unlock 시 해제됨)
             rb.useGravity = false;
-            rb.isKinematic = isLocked; // 잠겨있으면 물리적 이동 불가
+            rb.isKinematic = true; 
             rb.constraints = RigidbodyConstraints.FreezeRotation; // 회전 금지
             rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
             // 조각들끼리 부드럽게 미끄러지도록 콜라이더를 살짝 축소
+            // (동적으로 생성될 때만 축소하고, 이미 프리팹으로 구워져 축소된 경우 중복 축소 방지)
             BoxCollider[] colliders = GetComponentsInChildren<BoxCollider>();
             foreach (BoxCollider col in colliders)
             {
-                col.size = Vector3.one * 0.95f;
+                if (col.size.x >= 0.99f) // 최초 생성시에만 0.95로 줄임 (프리팹 로드 시 중복 축소 방지)
+                {
+                    col.size = Vector3.one * 0.95f; 
+                }
+            }
+
+            // 첫 번째 조각(루트)처럼 생성 단계에서 이미 Unlock() 지시를 받았다면 다시 Kinematic을 꺼줌
+            if (!isLocked)
+            {
+                rb.isKinematic = false;
             }
 
             // 여러 자식 큐브로 이루어진 테트리스 형태를 위해 자식들의 모든 렌더러에 재질 적용
@@ -57,6 +75,16 @@ namespace MysteryRoom.Puzzle
                 if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.7f);
                 else if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.7f);
                 
+                // 페이드아웃 효과를 위해 Transparent(투명 렌더링) 모드 설정 파라미터 활성화
+                mat.SetFloat("_Mode", 3); // Standard Shader의 Transparent mode
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetInt("_ZWrite", 0);
+                mat.DisableKeyword("_ALPHATEST_ON");
+                mat.EnableKeyword("_ALPHABLEND_ON");
+                mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = 3000;
+
                 foreach (Renderer rend in renderers)
                 {
                     rend.material = mat;
@@ -146,10 +174,73 @@ namespace MysteryRoom.Puzzle
             isSolved = true;
             Debug.Log($"Piece {pieceID} Solved!");
 
-            // 떨어져 나간 조각은 이제 큐브의 간섭을 받지 않도록 처리 가능 (여기선 놔둠)
+            // 떨어져 나간 조각은 이제 큐브의 간섭을 받지 않도록 처리 가능 (충돌 무시)
+            if (rb != null)
+            {
+                rb.isKinematic = true;
+                rb.detectCollisions = false;
+            }
 
-            // 만약 나한테 종속된 자식 조각이 있었다면, 이제 그 조각들이 풀릴 수 있도록 알림
-            CastPuzzleGenerator.Instance.NotifyPieceSolved(pieceID);
+            // 만약 나한테 종속된 자식 조각이 있었다면, 자체적으로 락을 풀어줌 (Generator 의존도 제거)
+            foreach (var piece in dependentPieces)
+            {
+                if (piece != null)
+                {
+                    piece.Unlock();
+                }
+            }
+
+            // 서서히 사라지는 연출 시작
+            StartCoroutine(FadeOutAndDestroyRoutine());
+        }
+
+        private IEnumerator FadeOutAndDestroyRoutine()
+        {
+            float duration = 1.0f; // 페이드 아웃에 걸리는 시간 (초)
+            float elapsed = 0f;
+
+            Renderer[] renderers = GetComponentsInChildren<Renderer>();
+            
+            // 모든 렌더러의 초기 색상 수집
+            Dictionary<Renderer, Color> initialColors = new Dictionary<Renderer, Color>();
+            foreach (Renderer rend in renderers)
+            {
+                if (rend.material.HasProperty("_Color"))
+                {
+                    initialColors[rend] = rend.material.color;
+                }
+                else if (rend.material.HasProperty("_BaseColor")) // URP/HDRP
+                {
+                    initialColors[rend] = rend.material.GetColor("_BaseColor");
+                }
+            }
+
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float normalizedTime = elapsed / duration;
+                float alpha = Mathf.Lerp(1f, 0f, normalizedTime);
+
+                foreach (Renderer rend in renderers)
+                {
+                    if (initialColors.TryGetValue(rend, out Color initColor))
+                    {
+                        Color newColor = new Color(initColor.r, initColor.g, initColor.b, alpha);
+                        if (rend.material.HasProperty("_Color"))
+                        {
+                            rend.material.color = newColor;
+                        }
+                        else if (rend.material.HasProperty("_BaseColor"))
+                        {
+                            rend.material.SetColor("_BaseColor", newColor);
+                        }
+                    }
+                }
+                yield return null;
+            }
+
+            // 완전히 투명해지면 오브젝트 파괴
+            Destroy(gameObject);
         }
 
         public void Unlock()
