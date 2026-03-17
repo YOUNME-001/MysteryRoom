@@ -11,14 +11,14 @@ namespace MysteryRoom.Puzzle
         public static CastPuzzleGenerator Instance { get; private set; }
 
         [Header("Generation Settings")]
+        [Tooltip("The dimension of the puzzle (e.g. 3 for a 3x3x3 cube)")]
+        public int gridSize = 3;
         public int piecesCount = 4; // 생성할 조각의 총 개수
-        public float puzzleSpreadRadius = 1.0f; // 초기 생성 시 퍼즐이 뭉쳐있는 반경
 
         // 생성된 퍼즐 조각 목록
         private List<PuzzlePiece> generatedPieces = new List<PuzzlePiece>();
 
-        // 그리드 크기 (3x3x3 큐브)
-        private const int GridSize = 3;
+        // 그리드 데이터
         private int[,,] puzzleGrid;
 
         void Awake()
@@ -43,23 +43,21 @@ namespace MysteryRoom.Puzzle
             // 2. 그리드 데이터 기반으로 실제 3D 오브젝트(퍼즐 조각) 스폰
             SpawnPiecesFromGrid();
 
-            // 3. 조각들 간의 풀이 종속성(락) 트리 구성
-            BuildDependencyTree();
-
-            Debug.Log($"[CastPuzzleGenerator] {piecesCount}개의 조각이 맞물려 3x3x3 큐브를 이루는 퍼즐 생성 완료!");
+            Debug.Log($"[CastPuzzleGenerator] {piecesCount}개의 조각이 맞물려 {gridSize}x{gridSize}x{gridSize} 큐브를 이루는 퍼즐 생성 완료!");
         }
 
         private void GenerateVoxelGrid()
         {
-            puzzleGrid = new int[GridSize, GridSize, GridSize];
+            puzzleGrid = new int[gridSize, gridSize, gridSize];
             
             // 배열 초기화 (-1은 빈 공간, 즉 아직 깎이지 않은 덩어리)
-            for (int x = 0; x < GridSize; x++)
-                for (int y = 0; y < GridSize; y++)
-                    for (int z = 0; z < GridSize; z++)
+            for (int x = 0; x < gridSize; x++)
+                for (int y = 0; y < gridSize; y++)
+                    for (int z = 0; z < gridSize; z++)
                         puzzleGrid[x, y, z] = -1;
 
-            int targetCellsPerPiece = Mathf.CeilToInt(27f / piecesCount);
+            float totalVolume = Mathf.Pow(gridSize, 3);
+            int targetCellsPerPiece = Mathf.CeilToInt(totalVolume / piecesCount);
             Vector3Int[] directions = { Vector3Int.right, Vector3Int.left, Vector3Int.up, Vector3Int.down, Vector3Int.forward, Vector3Int.back };
 
             // 핵심 퍼즐 알고리즘: 밖에서부터 한 조각씩 깎아서(역순 조립) 무조건 풀릴 수 있는 형태를 보장함
@@ -78,9 +76,9 @@ namespace MysteryRoom.Puzzle
                 foreach (Vector3Int dir in directions)
                 {
                     List<Vector3Int> exposedCells = new List<Vector3Int>();
-                    for (int x = 0; x < GridSize; x++)
-                        for (int y = 0; y < GridSize; y++)
-                            for (int z = 0; z < GridSize; z++)
+                    for (int x = 0; x < gridSize; x++)
+                        for (int y = 0; y < gridSize; y++)
+                            for (int z = 0; z < gridSize; z++)
                                 if (puzzleGrid[x, y, z] == -1 && IsExposed(new Vector3Int(x, y, z), dir, -1))
                                     exposedCells.Add(new Vector3Int(x, y, z));
 
@@ -100,10 +98,19 @@ namespace MysteryRoom.Puzzle
                             Vector3Int curr = activeFrontier[randIdx];
                             bool expanded = false;
 
+                            // 방향 무작위 섞기 (편향된 확장 방지)
+                            for (int i = 0; i < directions.Length; i++)
+                            {
+                                Vector3Int temp = directions[i];
+                                int rnd = Random.Range(i, directions.Length);
+                                directions[i] = directions[rnd];
+                                directions[rnd] = temp;
+                            }
+
                             foreach (Vector3Int neighDir in directions)
                             {
                                 Vector3Int neighbor = curr + neighDir;
-                                if (neighbor.x >= 0 && neighbor.x < GridSize && neighbor.y >= 0 && neighbor.y < GridSize && neighbor.z >= 0 && neighbor.z < GridSize)
+                                if (neighbor.x >= 0 && neighbor.x < gridSize && neighbor.y >= 0 && neighbor.y < gridSize && neighbor.z >= 0 && neighbor.z < gridSize)
                                 {
                                     if (puzzleGrid[neighbor.x, neighbor.y, neighbor.z] == -1) // 덩어리면
                                     {
@@ -118,27 +125,94 @@ namespace MysteryRoom.Puzzle
                                     }
                                 }
                             }
+                            // 사방이 막혀서 더 못 자라면 프론티어에서 탈락
                             if (!expanded) activeFrontier.RemoveAt(randIdx);
                         }
 
-                        // 완성된 조각 확정
-                        foreach (Vector3Int cell in pieceCells)
-                            puzzleGrid[cell.x, cell.y, cell.z] = p;
+                        // 완성된 조각 확정 이전에, 남은 -1 공간이 두 동강 나지 않았는지(Connected) 검사
+                        if (AreRemainingCellsConnected(-1))
+                        {
+                            foreach (Vector3Int cell in pieceCells)
+                                puzzleGrid[cell.x, cell.y, cell.z] = p;
 
-                        carved = true;
-                        break;
+                            carved = true;
+                            break;
+                        }
+                        else
+                        {
+                            // 쪼개졌다면 이번 조각 깎기는 무효화 (되돌리기)
+                            foreach (Vector3Int cell in pieceCells)
+                                puzzleGrid[cell.x, cell.y, cell.z] = -1;
+                        }
                     }
                 }
                 
                 if (!carved) Debug.LogWarning($"Piece {p} 조각 깎기 실패.");
             }
 
-            // 나머지 안 깎인 덩어리는 코어 조각(Piece 0)
-            for (int x = 0; x < GridSize; x++)
-                for (int y = 0; y < GridSize; y++)
-                    for (int z = 0; z < GridSize; z++)
+            // [추가] 고립된 남은 -1 조각들 병합 방지 (안전장치)
+            for (int x = 0; x < gridSize; x++)
+            {
+                for (int y = 0; y < gridSize; y++)
+                {
+                    for (int z = 0; z < gridSize; z++)
+                    {
                         if (puzzleGrid[x, y, z] == -1)
+                        {
                             puzzleGrid[x, y, z] = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 특정 ID의 블록들이 모두 하나로 연결되어 있는지(연결요소가 1개인지) 너비우선탐색(BFS)으로 검사
+        private bool AreRemainingCellsConnected(int targetValue)
+        {
+            Vector3Int startNode = new Vector3Int(-1, -1, -1);
+            int targetCount = 0;
+
+            for (int x = 0; x < gridSize; x++)
+                for (int y = 0; y < gridSize; y++)
+                    for (int z = 0; z < gridSize; z++)
+                        if (puzzleGrid[x, y, z] == targetValue)
+                        {
+                            targetCount++;
+                            if (startNode.x == -1) startNode = new Vector3Int(x, y, z);
+                        }
+
+            // 공간이 아예 없거나 1칸이면 무조건 연결된 것임
+            if (targetCount <= 1) return true;
+
+            int connectedCount = 0;
+            Queue<Vector3Int> queue = new Queue<Vector3Int>();
+            bool[,,] visited = new bool[gridSize, gridSize, gridSize];
+            Vector3Int[] dirs = { Vector3Int.right, Vector3Int.left, Vector3Int.up, Vector3Int.down, Vector3Int.forward, Vector3Int.back };
+
+            queue.Enqueue(startNode);
+            visited[startNode.x, startNode.y, startNode.z] = true;
+            connectedCount++;
+
+            while (queue.Count > 0)
+            {
+                Vector3Int curr = queue.Dequeue();
+                foreach (Vector3Int dir in dirs)
+                {
+                    Vector3Int n = curr + dir;
+                    if (n.x >= 0 && n.x < gridSize && n.y >= 0 && n.y < gridSize && n.z >= 0 && n.z < gridSize)
+                    {
+                        if (!visited[n.x, n.y, n.z] && puzzleGrid[n.x, n.y, n.z] == targetValue)
+                        {
+                            visited[n.x, n.y, n.z] = true;
+                            queue.Enqueue(n);
+                            connectedCount++;
+                        }
+                    }
+                }
+            }
+
+            // 시작점에서 갈 수 있는 덩어리의 개수가 전체 개수와 같다면 하나로 이어진 것
+            return connectedCount == targetCount;
         }
 
         private void SpawnPiecesFromGrid()
@@ -158,12 +232,12 @@ namespace MysteryRoom.Puzzle
             }
 
             // 그리드를 순회하며 해당 좌표에 큐브를 스폰하고, 맞는 ID의 부모에게 자식으로 넣습니다.
-            Vector3 centerOffset = new Vector3((GridSize - 1) / 2f, (GridSize - 1) / 2f, (GridSize - 1) / 2f);
-            for (int x = 0; x < GridSize; x++)
+            Vector3 centerOffset = new Vector3((gridSize - 1) / 2f, (gridSize - 1) / 2f, (gridSize - 1) / 2f);
+            for (int x = 0; x < gridSize; x++)
             {
-                for (int y = 0; y < GridSize; y++)
+                for (int y = 0; y < gridSize; y++)
                 {
-                    for (int z = 0; z < GridSize; z++)
+                    for (int z = 0; z < gridSize; z++)
                     {
                         int pieceId = puzzleGrid[x, y, z];
                         if (pieceId >= 0 && pieceId < piecesCount)
@@ -171,7 +245,7 @@ namespace MysteryRoom.Puzzle
                             GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                             cube.transform.SetParent(pieceParents[pieceId].transform);
 
-                            // 3x3x3 큐브의 로컬 위치 지정 (중앙 정렬)
+                            // 큐브의 로컬 위치 지정 (중앙 정렬)
                             cube.transform.localPosition = new Vector3(x, y, z) - centerOffset;
                             cube.transform.localScale = Vector3.one;
                         }
@@ -180,43 +254,18 @@ namespace MysteryRoom.Puzzle
             }
         }
 
-        private void BuildDependencyTree()
-        {
-            // 바깥에서부터 한 조각씩 깎았으므로, 풀이 순서는 가장 높은 숫자의 조각부터 풀림
-            int rootPieceID = piecesCount - 1;
-            generatedPieces[rootPieceID].Unlock(); // 가장 겉 조각은 처음부터 풀려있음
-
-            // 일렬로 종속성을 부여함 (Piece 3 -> 2 -> 1 -> 0 순으로 풀리게 보장)
-            for (int i = piecesCount - 2; i >= 0; i--)
-            {
-                PuzzlePiece childPiece = generatedPieces[i];
-                PuzzlePiece parentPiece = generatedPieces[i + 1];
-                
-                childPiece.parentPiece = parentPiece;
-                childPiece.isLocked = true; // 이전 조각이 풀리기 전까지 잠금
-
-                parentPiece.dependentPieces.Add(childPiece);
-                
-                // 위치를 원점에 고정 (정확히 조립된 큐브 상태를 초기값으로 유지)
-                childPiece.transform.localPosition = Vector3.zero;
-                childPiece.transform.localRotation = Quaternion.identity;
-                
-                Debug.Log($"Piece {i} is locked by Piece {i + 1}");
-            }
-        }
-
-
-
         private bool IsExposed(Vector3Int cell, Vector3Int dir, int solidValue)
         {
             Vector3Int curr = cell + dir;
             // 지정된 방향(dir)으로 쭉 나아갔을 때 장애물(solidValue)이 있는지 검사
-            while (curr.x >= 0 && curr.x < GridSize && curr.y >= 0 && curr.y < GridSize && curr.z >= 0 && curr.z < GridSize)
+            while (curr.x >= 0 && curr.x < gridSize && curr.y >= 0 && curr.y < gridSize && curr.z >= 0 && curr.z < gridSize)
             {
                 if (puzzleGrid[curr.x, curr.y, curr.z] == solidValue) return false;
                 curr += dir;
             }
             return true;
         }
+
+
     }
 }

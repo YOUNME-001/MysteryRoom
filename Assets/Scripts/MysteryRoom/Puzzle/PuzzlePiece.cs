@@ -12,14 +12,10 @@ namespace MysteryRoom.Puzzle
     public class PuzzlePiece : MonoBehaviour
     {
         public int pieceID;
-        public bool isLocked = true; // 부모 조각에 의해 묶여있는지 여부
         public bool isSolved = false; // 퍼즐에서 완전히 분리되었는지 여부
 
         [Header("Unlock Condition")]
-        public float unlockDistance = 4.0f; // 분리되기 위해 중심에서부터 떨어져야 하는 거리
-
-        public PuzzlePiece parentPiece; // 이 조각이 의존하고 있는 부모 조각
-        public List<PuzzlePiece> dependentPieces = new List<PuzzlePiece>(); // 내가 풀려야 풀리는 자식 조각들
+        public float unlockDistance = 1.5f; // 분리되기 위해 중심에서부터 떨어져야 하는 거리
 
         private Camera mainCam;
         private bool isDragging = false;
@@ -53,12 +49,6 @@ namespace MysteryRoom.Puzzle
                 }
             }
 
-            // 첫 번째 조각(루트)처럼 생성 단계에서 이미 Unlock() 지시를 받았다면 다시 Kinematic을 꺼줌
-            if (!isLocked)
-            {
-                rb.isKinematic = false;
-            }
-
             // 여러 자식 큐브로 이루어진 테트리스 형태를 위해 자식들의 모든 렌더러에 재질 적용
             Renderer[] renderers = GetComponentsInChildren<Renderer>();
             
@@ -69,11 +59,17 @@ namespace MysteryRoom.Puzzle
             if (shader != null && renderers.Length > 0)
             {
                 Material mat = new Material(shader);
-                mat.color = new Color(Random.value, Random.value, Random.value);
                 
-                if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.8f);
-                if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.7f);
-                else if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.7f);
+                // 실제 주물/금속 퍼즐(Cast Puzzle) 느낌을 위해 채도를 대폭 낮춥니다 (0.0 ~ 0.15 극저채도)
+                float hue = Random.Range(0f, 1f);
+                float saturation = Random.Range(0.0f, 0.15f); // 쇠, 흑철, 은 느낌
+                float value = Random.Range(0.3f, 0.8f); // 흑철처럼 어둡거나 은처럼 밝은 명도 모두 포함
+                mat.color = Color.HSVToRGB(hue, saturation, value);
+                
+                // 금속성(Metallic)과 매끄러움(Smoothness)을 극대화하여 실제 금속 고리/블럭 느낌 제공
+                if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 1.0f);
+                if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.85f);
+                else if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.85f);
                 
                 // 페이드아웃 효과를 위해 Transparent(투명 렌더링) 모드 설정 파라미터 활성화
                 mat.SetFloat("_Mode", 3); // Standard Shader의 Transparent mode
@@ -102,7 +98,7 @@ namespace MysteryRoom.Puzzle
 
         void FixedUpdate()
         {
-            if (isSolved || rb == null || isLocked) return;
+            if (isSolved || rb == null) return;
 
             if (isDragging && Mouse.current != null)
             {
@@ -111,20 +107,33 @@ namespace MysteryRoom.Puzzle
                 // 마우스 이동량이 있을 때만 물리 이동 연산 수행
                 if (mouseDelta.sqrMagnitude > 0.01f)
                 {
-                    // 카메라가 바라보는 방향을 기준으로 좌우/상하 이동 벡터 계산
-                    Vector3 moveDir = mainCam.transform.right * mouseDelta.x + mainCam.transform.up * mouseDelta.y;
+                    // 카메라 이동 벡터
+                    Vector3 rawMoveDir = mainCam.transform.right * mouseDelta.x + mainCam.transform.up * mouseDelta.y;
                     
-                    // 위치를 강제로 이동시키지 않고 velocity를 변경하여 콜라이더끼리 자연스럽게 막히도록 처리
-                    rb.linearVelocity = moveDir * 5.0f; 
+                    // 대각선 이동으로 인한 블록 틈새 끼임(Overlap)을 완벽히 방지하려면, 
+                    // Soma Cube 특성상 직각인 X, Y, Z 세 축 중 가장 마우스 이동이 큰 단일 축으로만(Snap) 움직여야 합니다.
+                    Vector3 absDir = new Vector3(Mathf.Abs(rawMoveDir.x), Mathf.Abs(rawMoveDir.y), Mathf.Abs(rawMoveDir.z));
+                    Vector3 moveDir = Vector3.zero;
+                    
+                    if (absDir.x > absDir.y && absDir.x > absDir.z) moveDir = new Vector3(Mathf.Sign(rawMoveDir.x), 0, 0);
+                    else if (absDir.y > absDir.x && absDir.y > absDir.z) moveDir = new Vector3(0, Mathf.Sign(rawMoveDir.y), 0);
+                    else moveDir = new Vector3(0, 0, Mathf.Sign(rawMoveDir.z));
+
+                    // 직접 velocity를 덮어씌우면 벽(다른 조각)에 눌러붙어 파고들기 때문에,
+                    // AddForce 모델을 사용하여 유니티 물리엔진이 자연스럽게 반발력을 처리하게 둡니다.
+                    Vector3 targetVelocity = moveDir * 5.0f;
+                    Vector3 velocityDifference = targetVelocity - rb.linearVelocity;
+                    rb.AddForce(velocityDifference * 20f, ForceMode.Acceleration);
                 }
                 else
                 {
-                    rb.linearVelocity = Vector3.zero;
+                    // 마우스 멈췄을 때 끼임 없이 멈추기 위해 부드러운 감속 처리
+                    rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, Vector3.zero, 15f * Time.fixedDeltaTime);
                 }
             }
             else
             {
-                rb.linearVelocity = Vector3.zero; // 드래그 안할 때는 물리 감속
+                rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, Vector3.zero, 15f * Time.fixedDeltaTime); // 드래그 안할 때는 감속
             }
         }
 
@@ -142,19 +151,23 @@ namespace MysteryRoom.Puzzle
                     PuzzlePiece clickedPiece = hit.transform.GetComponentInParent<PuzzlePiece>();
                     if (clickedPiece == this)
                     {
-                        if (isLocked)
-                        {
-                            Debug.Log($"Piece {pieceID} is locked by another piece!");
-                            return;
-                        }
                         isDragging = true;
+                        if (rb != null) rb.isKinematic = false; // 드래그 시작 시 물리 기반 이동을 위해 Kinematic 해제
                     }
                 }
             }
             // 마우스 버튼 뗄 때 드래그 종료
             else if (Mouse.current.leftButton.wasReleasedThisFrame)
             {
-                isDragging = false;
+                if (isDragging)
+                {
+                    isDragging = false;
+                    if (rb != null)
+                    {
+                        rb.linearVelocity = Vector3.zero;
+                        rb.isKinematic = true; // 드래그 종료 시 다시 굳건한 벽 역할을 위해 Kinematic 활성화
+                    }
+                }
             }
         }
 
@@ -179,15 +192,6 @@ namespace MysteryRoom.Puzzle
             {
                 rb.isKinematic = true;
                 rb.detectCollisions = false;
-            }
-
-            // 만약 나한테 종속된 자식 조각이 있었다면, 자체적으로 락을 풀어줌 (Generator 의존도 제거)
-            foreach (var piece in dependentPieces)
-            {
-                if (piece != null)
-                {
-                    piece.Unlock();
-                }
             }
 
             // 서서히 사라지는 연출 시작
@@ -243,13 +247,6 @@ namespace MysteryRoom.Puzzle
             Destroy(gameObject);
         }
 
-        public void Unlock()
-        {
-            isLocked = false;
-            if (rb != null)
-            {
-                rb.isKinematic = false;
-            }
-        }
+
     }
 }
