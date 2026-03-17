@@ -194,6 +194,12 @@ namespace MysteryRoom.Puzzle
                 rb.detectCollisions = false;
             }
 
+            // 전체 퍼즐 생성기(매니저)에 이 조각이 풀렸음을 보고함
+            if (CastPuzzleGenerator.Instance != null)
+            {
+                CastPuzzleGenerator.Instance.ReportPieceSolved();
+            }
+
             // 서서히 사라지는 연출 시작
             StartCoroutine(FadeOutAndDestroyRoutine());
         }

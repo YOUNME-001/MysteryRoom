@@ -1,5 +1,7 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
+using Random = UnityEngine.Random;
 
 namespace MysteryRoom.Puzzle
 {
@@ -10,6 +12,8 @@ namespace MysteryRoom.Puzzle
     public class CastPuzzleGenerator : MonoBehaviour{
         public static CastPuzzleGenerator Instance { get; private set; }
 
+        public Action OnPuzzleCompleted; // 퍼즐이 완전히 풀렸을 때 호출되는 액션
+
         [Header("Generation Settings")]
         [Tooltip("The dimension of the puzzle (e.g. 3 for a 3x3x3 cube)")]
         public int gridSize = 3;
@@ -17,6 +21,8 @@ namespace MysteryRoom.Puzzle
 
         // 생성된 퍼즐 조각 목록
         private List<PuzzlePiece> generatedPieces = new List<PuzzlePiece>();
+
+        private int solvedPiecesCount = 0; // 풀린 조각 수 파악용
 
         // 그리드 데이터
         private int[,,] puzzleGrid;
@@ -36,6 +42,7 @@ namespace MysteryRoom.Puzzle
         {
             foreach (Transform child in transform) { Destroy(child.gameObject); }
             generatedPieces.Clear();
+            solvedPiecesCount = 0; // 여기서 풀린 조각 개수 초기화
 
             // 1. 3x3x3 그리드를 각 퍼즐 조각 ID로 채우기 (Flood Fill 방식)
             GenerateVoxelGrid();
@@ -224,11 +231,6 @@ namespace MysteryRoom.Puzzle
                 pieceParents[i] = new GameObject($"CastPiece_{i}");
                 pieceParents[i].transform.SetParent(this.transform);
                 pieceParents[i].transform.localPosition = Vector3.zero;
-
-                PuzzlePiece pieceComp = pieceParents[i].AddComponent<PuzzlePiece>();
-                pieceComp.pieceID = i;
-                
-                generatedPieces.Add(pieceComp);
             }
 
             // 그리드를 순회하며 해당 좌표에 큐브를 스폰하고, 맞는 ID의 부모에게 자식으로 넣습니다.
@@ -252,6 +254,21 @@ namespace MysteryRoom.Puzzle
                     }
                 }
             }
+
+            // 자식(블록)이 하나도 생성되지 않은(깎기 실패한) 더미 부모는 삭제하고, 유효한 조각만 리스트에 넣습니다.
+            for (int i = 0; i < piecesCount; i++)
+            {
+                if (pieceParents[i].transform.childCount == 0)
+                {
+                    Destroy(pieceParents[i]);
+                }
+                else
+                {
+                    PuzzlePiece pieceComp = pieceParents[i].AddComponent<PuzzlePiece>();
+                    pieceComp.pieceID = i;
+                    generatedPieces.Add(pieceComp);
+                }
+            }
         }
 
         private bool IsExposed(Vector3Int cell, Vector3Int dir, int solidValue)
@@ -266,6 +283,18 @@ namespace MysteryRoom.Puzzle
             return true;
         }
 
-
+        public void ReportPieceSolved()
+        {
+            solvedPiecesCount++;
+            int actualPiecesCount = generatedPieces.Count;
+            Debug.Log($"Pieces Count (Target): {piecesCount}");
+            Debug.Log($"Actual Pieces Generated: {actualPiecesCount}");
+            Debug.Log($"Solved Pieces: {solvedPiecesCount}");
+            if (solvedPiecesCount >= actualPiecesCount)
+            {
+                Debug.Log("[CastPuzzleGenerator] All puzzle pieces solved! Puzzle Completed!");
+                OnPuzzleCompleted?.Invoke();
+            }
+        }
     }
 }
