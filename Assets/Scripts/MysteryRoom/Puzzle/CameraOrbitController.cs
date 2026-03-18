@@ -29,22 +29,66 @@ namespace MysteryRoom.Puzzle
         private float y = 0.0f;
         private bool isOrbiting = false;
 
+        private Vector3 focusCenter; // 실제 카메라가 바라볼 시각적 중심점
+
         void Start()
         {
-            Vector3 angles = transform.eulerAngles;
-            x = angles.y;
-            y = angles.x;
+            // 초기에 예쁜 3D 입체 투시(얼짱 각도)로 강제 정렬합니다. 
+            // (에디터에 무작위로 방치된 카메라 각도로 시작하는 것을 방지)
+            x = 45f;
+            y = 30f;
 
-            // 만약 타겟이 수동으로 안 지정되어 있다면 자동으로 생성기 중심 찾기
+            // 만약 타겟이 수동으로 지정되어 있지 않다면, 씬에 있는 퍼즐 매니저나 생성기를 자동으로 찾습니다.
             if (target == null)
             {
-                if (CastPuzzleGenerator.Instance != null)
+                CastPuzzleManager manager = FindObjectOfType<CastPuzzleManager>();
+                if (manager != null)
                 {
-                    target = CastPuzzleGenerator.Instance.transform;
+                    target = manager.transform;
                 }
                 else
                 {
-                    Debug.LogWarning("[CameraOrbitController] 타겟 오브젝트를 찾지 못했습니다! 인스펙터에 타겟을 할당하거나 게임씬에 CastPuzzleGenerator가 있어야 합니다.");
+                    CastPuzzleGenerator gen = FindObjectOfType<CastPuzzleGenerator>();
+                    if (gen != null) target = gen.transform;
+                }
+
+                if (target == null)
+                {
+                    Debug.LogWarning("[CameraOrbitController] 타겟으로 삼을 퍼즐을 씬에서 찾을 수 없습니다!");
+                    focusCenter = Vector3.zero;
+                }
+                else
+                {
+                    focusCenter = target.position;
+                }
+            }
+            else
+            {
+                focusCenter = target.position;
+            }
+
+            // 타겟(퍼즐)의 크기에 맞춰 카메라 초점 중앙값과 줌 인/아웃 거리를 시각적으로 완벽하게 포커싱합니다.
+            if (target != null)
+            {
+                Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
+                if (renderers.Length > 0)
+                {
+                    Bounds bounds = renderers[0].bounds;
+                    foreach (Renderer r in renderers) bounds.Encapsulate(r.bounds);
+                    
+                    // 빈 오브젝트 피벗이 아닌, 실제 퍼즐 기하학의 무게요소 중앙을 완벽한 추적 대상으로 삼음
+                    focusCenter = bounds.center; 
+
+                    // 완성된 퍼즐 크기와 현재 카메라의 시야각(FOV)을 수학적으로 계산하여 화면 가운데에 가득 차는 최적의 거리를 도출
+                    float puzzleSize = bounds.size.magnitude;
+                    float fov = Camera.main != null ? Camera.main.fieldOfView : 60f;
+                    
+                    // Screen framing calculation
+                    distance = (puzzleSize * 0.6f) / Mathf.Tan(fov * 0.5f * Mathf.Deg2Rad);
+                    
+                    minDistance = puzzleSize * 0.4f;
+                    maxDistance = distance * 3.0f;
+                    zoomSpeed = puzzleSize * 2.0f; 
                 }
             }
         }
@@ -73,17 +117,18 @@ namespace MysteryRoom.Puzzle
                 y = ClampAngle(y, yMinLimit, yMaxLimit);
             }
 
-            // 줌 처리 (마우스 휠 스크롤)
-            float scroll = Mouse.current.scroll.ReadValue().y;
-            if (Mathf.Abs(scroll) > 0.01f)
+            // 줌 처리 (마우스 휠 스크롤) - 마우스 스크롤이 환경에 따라 엄청 튀는 현상을 안정화
+            float scrollRaw = Mouse.current.scroll.ReadValue().y;
+            if (Mathf.Abs(scrollRaw) > 0.01f)
             {
-                distance -= scroll * zoomSpeed * 0.001f;
+                float scrollDir = Mathf.Sign(scrollRaw); // 방향만 추출하여 일정하게 동작
+                distance -= scrollDir * zoomSpeed * 0.1f;
                 distance = Mathf.Clamp(distance, minDistance, maxDistance);
             }
 
-            // 실제 카메라 위치와 회전값 적용
+            // 실제 카메라 위치와 회전값 적용 (타겟 오브젝트 피벗이 아닌 완벽한 bounds.center 기준)
             Quaternion rotation = Quaternion.Euler(y, x, 0);
-            Vector3 position = rotation * new Vector3(0.0f, 0.0f, -distance) + target.position;
+            Vector3 position = rotation * new Vector3(0.0f, 0.0f, -distance) + focusCenter;
 
             transform.rotation = rotation;
             transform.position = position;

@@ -50,66 +50,72 @@ namespace MysteryRoom.Puzzle
                 }
             }
 
-            // 여러 자식 큐브로 이루어진 테트리스 형태를 위해 자식들의 모든 렌더러에 재질 적용
-            Renderer[] renderers = GetComponentsInChildren<Renderer>();
-            
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("HDRP/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
+            // [프리팹 베이킹 검증] 이 조각이 이미 한 번 동적으로 생성되어 테두리 렌더링 세팅이 끝난 프리팹인지 확인합니다.
+            bool isAlreadyBaked = transform.Find("SolidEdgeFrames") != null || GetComponentsInChildren<Renderer>().Length == 0;
 
-            if (shader != null && renderers.Length > 0)
+            if (!isAlreadyBaked)
             {
-                Material mat = new Material(shader);
+                // 아직 렌더링된 적 없는 날것의 큐브 덩어리일 경우, 예쁜 투명 재질과 테두리를 입히는 시각화 과정을 진행합니다.
+                Renderer[] renderers = GetComponentsInChildren<Renderer>();
                 
-                // 안쪽 조각이 명확하게 들여다라고 보이도록 맑고 투명한 유리(Glass) 느낌으로 색상 변경
-                float hue = Random.Range(0f, 1f);
-                float saturation = Random.Range(0.1f, 0.5f);  // 은은한 틴트(Tint) 색감
-                float value = Random.Range(0.8f, 1.0f); // 밝고 영롱하게
-                Color baseColor = Color.HSVToRGB(hue, saturation, value);
-                baseColor.a = 0.2f; // ★ 20% 불투명도 적용 (매우 투명하게 내부가 다 보임)
-                
-                if (mat.HasProperty("_Color")) mat.color = baseColor;
-                else if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", baseColor);
-                
-                // 빛이 많이 맺히도록 메탈릭은 살짝 덜어내고 매끄러움(Smoothness)을 극대화 (유리 표면 느낌)
-                if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.2f);
-                if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.95f);
-                else if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.95f);
-                
-                // 페이드아웃 효과를 위해 Transparent(투명 렌더링) 모드 설정 파라미터 완벽 활성화
-                mat.SetFloat("_Mode", 3); // Standard Shader의 Transparent mode
-                mat.SetFloat("_Surface", 1); // URP의 Transparent mode (0:Opaque, 1:Transparent)
-                
-                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                mat.SetInt("_ZWrite", 0);
-                
-                mat.DisableKeyword("_ALPHATEST_ON");
-                mat.EnableKeyword("_ALPHABLEND_ON");
-                mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT"); // URP Keyword
-                mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-                
-                mat.SetOverrideTag("RenderType", "Transparent");
-                mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null) shader = Shader.Find("HDRP/Lit");
+                if (shader == null) shader = Shader.Find("Standard");
 
-                foreach (Renderer rend in renderers)
+                if (shader != null && renderers.Length > 0)
                 {
-                    rend.material = mat;
+                    Material mat = new Material(shader);
+                    
+                    // 안쪽 조각이 명확하게 들여다보이도록 맑고 투명한 유리(Glass) 느낌으로 무작위 색상 부여
+                    float hue = Random.Range(0f, 1f);
+                    float saturation = Random.Range(0.1f, 0.5f);  // 은은한 틴트(Tint) 색감
+                    float value = Random.Range(0.8f, 1.0f); // 밝고 영롱하게
+                    Color baseColor = Color.HSVToRGB(hue, saturation, value);
+                    baseColor.a = 0.2f; // 20% 불투명도 적용 (매우 투명하게 내부가 다 보임)
+                    
+                    if (mat.HasProperty("_Color")) mat.color = baseColor;
+                    else if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", baseColor);
+                    
+                    // 빛이 많이 맺히도록 메탈릭은 살짝 덜어내고 매끄러움(Smoothness)을 극대화 (유리 표면 느낌)
+                    if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.2f);
+                    if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.95f);
+                    else if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.95f);
+                    
+                    // 페이드아웃 효과를 위해 Transparent(투명 렌더링) 모드 설정 파라미터 완벽 활성화
+                    mat.SetFloat("_Mode", 3); // Standard Shader의 Transparent mode
+                    mat.SetFloat("_Surface", 1); // URP의 Transparent mode (0:Opaque, 1:Transparent)
+                    
+                    mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                    mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                    mat.SetInt("_ZWrite", 0);
+                    
+                    mat.DisableKeyword("_ALPHATEST_ON");
+                    mat.EnableKeyword("_ALPHABLEND_ON");
+                    mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT"); // URP Keyword
+                    mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                    
+                    mat.SetOverrideTag("RenderType", "Transparent");
+                    mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+
+                    foreach (Renderer rend in renderers)
+                    {
+                        rend.material = mat;
+                    }
+
+                    // 뒷 배경이나 뒤 조각의 테두리가 확실하게 보이도록 각 큐브마다 단단한 불투명 3D 테두리를 만들어 줍니다.
+                    Material edgeMat = new Material(shader);
+                    // 테두리는 몸통 색상과 같지만 매우 진하고 완전 불투명하게 (Alpha = 1.0) 설정
+                    Color edgeColor = Color.HSVToRGB(hue, saturation, value * 0.7f); 
+                    edgeColor.a = 1.0f; // 테두리는 불투명
+
+                    if (edgeMat.HasProperty("_Color")) edgeMat.color = edgeColor;
+                    else if (edgeMat.HasProperty("_BaseColor")) edgeMat.SetColor("_BaseColor", edgeColor);
+
+                    if (edgeMat.HasProperty("_Metallic")) edgeMat.SetFloat("_Metallic", 0.8f);
+                    if (edgeMat.HasProperty("_Smoothness")) edgeMat.SetFloat("_Smoothness", 0.5f);
+
+                    DrawSolidEdges(renderers, edgeMat);
                 }
-
-                // [추가] 뒷 배경이나 뒤 조각의 테두리가 확실하게 보이도록 각 큐브마다 단단한 불투명 3D 테두리를 만들어 줍니다.
-                Material edgeMat = new Material(shader);
-                // 테두리는 몸통 색상과 같지만 매우 진하고 완전 불투명하게 (Alpha = 1.0) 설정
-                Color edgeColor = Color.HSVToRGB(hue, saturation, value * 0.7f); 
-                edgeColor.a = 1.0f; // 테두리는 불투명
-
-                if (edgeMat.HasProperty("_Color")) edgeMat.color = edgeColor;
-                else if (edgeMat.HasProperty("_BaseColor")) edgeMat.SetColor("_BaseColor", edgeColor);
-
-                if (edgeMat.HasProperty("_Metallic")) edgeMat.SetFloat("_Metallic", 0.8f);
-                if (edgeMat.HasProperty("_Smoothness")) edgeMat.SetFloat("_Smoothness", 0.5f);
-
-                DrawSolidEdges(renderers, edgeMat);
             }
         }
 
@@ -306,8 +312,9 @@ namespace MysteryRoom.Puzzle
         {
             if (isSolved) return;
 
-            // 조각이 중앙부(0,0,0)에서 일정 거리 이상 완전히 빠져나왔는지 확인
-            if (transform.position.magnitude > unlockDistance)
+            // 프리팹 코어가 월드 맵 어디에 위치하든 무관하게(World Origin 강제 배제),
+            // 조각이 부모(=퍼즐 조립 중심)의 원점에서 일정 거리 이상 완전히 빠져나왔는지 확인합니다.
+            if (transform.localPosition.magnitude > unlockDistance)
             {
                 SolvePiece();
             }

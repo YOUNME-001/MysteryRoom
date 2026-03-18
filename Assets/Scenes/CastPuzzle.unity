@@ -353,7 +353,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MysteryRoom.Puzzle.CameraOrbitController
   target: {fileID: 0}
-  distance: 0.8
+  distance: 5
   xSpeed: 0.5
   ySpeed: 0.5
   zoomSpeed: 2
@@ -434,8 +434,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d865d4b0d2cb3ba408cfcd2e7c26a009, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MysteryRoom.Puzzle.CastPuzzleGenerator
-  gridSize: 7
-  cubeSize: 0.3
+  gridSize: 15
+  cubeSize: 1
   difficulty: 10
   pieceCountMode: 0
   customPiecesCount: 4
