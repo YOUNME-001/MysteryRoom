@@ -43,16 +43,30 @@ namespace MysteryRoom.Puzzle.Editor
             Renderer[] renderers = selectedObj.GetComponentsInChildren<Renderer>(true);
             int matIndex = 0;
             
+            // 이미 파일로 추출(Save)이 끝난 동적 머티리얼을 추적해 중복 생성을 완벽 차단
+            System.Collections.Generic.Dictionary<Material, Material> savedMaterialsDict = new System.Collections.Generic.Dictionary<Material, Material>();
+            
             foreach (Renderer rend in renderers)
             {
                 if (rend.sharedMaterial != null && !AssetDatabase.Contains(rend.sharedMaterial))
                 {
-                    // 런타임에 동적으로 만들어진 머티리얼(Instance)인 경우
-                    Material matClone = new Material(rend.sharedMaterial);
-                    string matPath = $"{targetFolderPath}/PuzzleMat_{matIndex++}.mat";
-                    
-                    AssetDatabase.CreateAsset(matClone, matPath);
-                    rend.sharedMaterial = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+                    if (savedMaterialsDict.TryGetValue(rend.sharedMaterial, out Material savedMat))
+                    {
+                        // 이미 앞선 큐브가 구워놓은 머티리얼 에셋 재사용! (머티리얼 갯수를 전체 큐브 수 -> 조각 수로 획기적 감축)
+                        rend.sharedMaterial = savedMat;
+                    }
+                    else
+                    {
+                        // 아직 구워지지 않은 동적 머티리얼이면 새로 에셋 생성 및 딕셔너리에 등록
+                        Material matClone = new Material(rend.sharedMaterial);
+                        string matPath = $"{targetFolderPath}/PuzzleMat_ID{matIndex++}.mat";
+                        
+                        AssetDatabase.CreateAsset(matClone, matPath);
+                        Material newSavedAsset = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+                        
+                        savedMaterialsDict[rend.sharedMaterial] = newSavedAsset;
+                        rend.sharedMaterial = newSavedAsset;
+                    }
                 }
             }
             
@@ -65,6 +79,13 @@ namespace MysteryRoom.Puzzle.Editor
             if (generator != null)
             {
                 UnityEngine.Object.DestroyImmediate(generator);
+            }
+
+            // 프리팹에는 런타임 퍼즐 컴플리션 체크 매니저 기능만 남깁니다.
+            CastPuzzleManager manager = selectedObj.GetComponent<CastPuzzleManager>();
+            if (manager == null)
+            {
+                selectedObj.AddComponent<CastPuzzleManager>();
             }
 
             // 2차적으로 프리팹 생성 (해당 폴더 안에)
