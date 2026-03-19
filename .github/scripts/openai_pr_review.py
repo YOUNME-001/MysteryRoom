@@ -1,12 +1,13 @@
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
-REPO = os.environ["GITHUB_REPOSITORY"]
-PR_NUMBER = os.environ["PR_NUMBER"]
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+REPO = os.getenv("GITHUB_REPOSITORY", "")
+PR_NUMBER = os.getenv("PR_NUMBER", "")
 
 COMMENT_MARKER = "<!-- openai-unity-pr-review -->"
 MAX_DIFF_CHARS = 90000
@@ -219,26 +220,33 @@ def build_comment(result):
 
 
 def upsert_comment(body):
-    list_url = f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100"
-    comments = github_json(list_url)
+    try:
+        list_url = f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100"
+        comments = github_json(list_url)
 
-    existing = None
-    for comment in comments:
-        if COMMENT_MARKER in comment.get("body", ""):
-            existing = comment
-            break
+        existing = None
+        for comment in comments:
+            if COMMENT_MARKER in comment.get("body", ""):
+                existing = comment
+                break
 
-    if existing:
-        github_json(existing["url"], method="PATCH", data={"body": body})
-    else:
-        github_json(
-            f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments",
-            method="POST",
-            data={"body": body},
-        )
+        if existing:
+            github_json(existing["url"], method="PATCH", data={"body": body})
+        else:
+            github_json(
+                f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments",
+                method="POST",
+                data={"body": body},
+            )
+    except Exception as e:
+        print(f"[warn] comment skipped: {e}")
 
 
 def main():
+    if not GITHUB_TOKEN or not REPO or not PR_NUMBER:
+        print("[warn] github env missing")
+        return
+
     diff_text = fetch_pr_diff()
     cs_diff = extract_cs_diff(diff_text)
 
@@ -253,7 +261,26 @@ def main():
         upsert_comment(f"{COMMENT_MARKER}\n리뷰 스킵: OPENAI_API_KEY 없음")
         return
 
-    result = review_with_openai(cs_diff)
+    is_fork = os.getenv("IS_FORK", "false").lower() == "true"
+    pr_author = os.getenv("PR_AUTHOR", "")
+
+    if is_fork or pr_author == "dependabot[bot]":
+        print("[warn] fork/dependabot PR: comment skipped")
+        return
+
+    try:
+        result = review_with_openai(cs_diff)
+    except Exception as e:
+        msg = str(e)
+        if "insufficient_quota" in msg:
+            print("[warn] OpenAI quota 부족")
+            upsert_comment(f"{COMMENT_MARKER}\n리뷰 스킵: OpenAI API quota 부족")
+            return
+
+        print(f"[warn] OpenAI review failed: {msg}")
+        upsert_comment(f"{COMMENT_MARKER}\n리뷰 실패: OpenAI 호출 오류")
+        return
+
     upsert_comment(build_comment(result))
 
 
@@ -261,5 +288,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        upsert_comment(f"{COMMENT_MARKER}\n리뷰 실패: {e}")
-        raise
+        print(f"[error] {e}")
+        sys.exit(0)
