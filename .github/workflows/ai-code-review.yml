@@ -1,95 +1,95 @@
 name: AI Code Review (Unity Advanced KR)
 
 on:
-  pull_request:
-    types: [opened, synchronize]
+    pull_request:
+        types: [opened, synchronize]
 
 jobs:
-  review:
-    runs-on: ubuntu-latest
+    review:
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@v4
 
-      - name: Fetch base branch
-        run: |
-          git fetch origin ${{ github.base_ref }}
+            - name: Fetch base branch
+              run: |
+                  git fetch origin ${{ github.base_ref }}
 
-      - name: Generate diff with line mapping
-        run: |
-          git diff origin/${{ github.base_ref }} --unified=0 -- '*.cs' > diff.txt
+            - name: Generate diff with line mapping
+              run: |
+                  git diff origin/${{ github.base_ref }} --unified=0 -- '*.cs' > diff.txt
 
-      - name: Trim diff (token safety)
-        run: |
-          head -c 12000 diff.txt > diff_trimmed.txt
+            - name: Trim diff (token safety)
+              run: |
+                  head -c 12000 diff.txt > diff_trimmed.txt
 
-      - name: Call OpenAI API (Korean Review)
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          DIFF_CONTENT=$(cat diff_trimmed.txt | sed 's/"/\\"/g')
+            - name: Call OpenAI API (Korean Review)
+              env:
+                  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+              run: |
+                  DIFF_CONTENT=$(cat diff_trimmed.txt | sed 's/"/\\"/g')
 
-          PROMPT="당신은 시니어 유니티 개발자입니다.
+                  PROMPT="당신은 시니어 유니티 개발자입니다.
 
-반드시 모든 코멘트를 한국어로 작성하세요.
+    반드시 모든 코멘트를 한국어로 작성하세요.
 
 아래 형식의 JSON만 반환하세요:
-[
-  {
-    \"file\": \"Assets/Scripts/Example.cs\",
-    \"line\": 123,
-    \"comment\": \"문제 설명 (한국어)\"
-  }
-]
+  [
+      {
+          \"file\": \"Assets/Scripts/Example.cs\",
+          \"line\": 123,
+          \"comment\": \"문제 설명 (한국어)\"
+      }
+  ]
 
 규칙:
-- 반드시 한국어로 작성
-- JSON 외 다른 텍스트 절대 금지
-- 실제 문제만 작성 (불필요한 코멘트 금지)
-- NEW 파일 기준 라인 번호 사용
+    - 반드시 한국어로 작성
+    - JSON 외 다른 텍스트 절대 금지
+    - 실제 문제만 작성 (불필요한 코멘트 금지)
+    - NEW 파일 기준 라인 번호 사용
 
 리뷰 기준:
-- 버그 가능성 (null, 예외 등)
-- 성능 문제 (GC 할당, LINQ, Update 남용)
-- Unity 베스트 프랙티스
-  - GetComponent 반복 호출
-  - MonoBehaviour 라이프사이클
-  - SerializeField 사용
-- 구조적 문제 (결합도, SRP 위반)
+    - 버그 가능성 (null, 예외 등)
+    - 성능 문제 (GC 할당, LINQ, Update 남용)
+    - Unity 베스트 프랙티스
+        - GetComponent 반복 호출
+        - MonoBehaviour 라이프사이클
+        - SerializeField 사용
+    - 구조적 문제 (결합도, SRP 위반)
 
 Diff:
-$DIFF_CONTENT"
+    $DIFF_CONTENT"
 
-          RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"model\": \"gpt-5.3\",
-              \"messages\": [
-                {\"role\": \"system\", \"content\": \"You are a senior Unity developer.\"},
-                {\"role\": \"user\", \"content\": \"$PROMPT\"}
-              ]
-            }")
+    RESPONSE=$(curl https://api.openai.com/v1/chat/completions \
+-H "Authorization: Bearer $OPENAI_API_KEY" \
+-H "Content-Type: application/json" \
+    -d "{
+\"model\": \"gpt-5.3\",
+\"messages\": [
+    {\"role\": \"system\", \"content\": \"You are a senior Unity developer.\"},
+    {\"role\": \"user\", \"content\": \"$PROMPT\"}
+]
+}")
 
           echo "$RESPONSE" > result.json
 
-      - name: Extract AI result
-        run: |
-          cat result.json | jq -r '.choices[0].message.content' > review.json
+- name: Extract AI result
+  run: |
+      cat result.json | jq -r '.choices[0].message.content' > review.json
 
-      - name: Build diff line map
-        run: |
-          python3 << 'EOF'
-import re
-import json
+- name: Build diff line map
+  run: |
+      python3 << 'EOF'
+    import re
+    import json
 
-diff = open("diff.txt").read().splitlines()
+    diff = open("diff.txt").read().splitlines()
 
-file = None
-new_line = 0
+    file = None
+    new_line = 0
 
-line_map = []
+    line_map = []
 
 for line in diff:
     if line.startswith("+++ b/"):
@@ -101,70 +101,70 @@ for line in diff:
     elif line.startswith("+") and not line.startswith("+++"):
         new_line += 1
         line_map.append({
-            "file": file,
-            "line": new_line
-        })
+        "file": file,
+        "line": new_line
+    })
     elif not line.startswith("-"):
         new_line += 1
 
-open("line_map.json", "w").write(json.dumps(line_map))
-EOF
+    open("line_map.json", "w").write(json.dumps(line_map))
+    EOF
 
-      - name: Match AI comments to valid lines
-        run: |
-          python3 << 'EOF'
-import json
+- name: Match AI comments to valid lines
+  run: |
+      python3 << 'EOF'
+    import json
 
 try:
     comments = json.load(open("review.json"))
 except:
     comments = []
 
-line_map = json.load(open("line_map.json"))
+    line_map = json.load(open("line_map.json"))
 
-valid = []
+    valid = []
 
-line_set = {(l["file"], l["line"]) for l in line_map}
+    line_set = {(l["file"], l["line"]) for l in line_map}
 
 for c in comments:
     key = (c.get("file"), c.get("line"))
     if key in line_set:
         valid.append(c)
 
-open("filtered_comments.json", "w").write(json.dumps(valid))
-EOF
+    open("filtered_comments.json", "w").write(json.dumps(valid))
+    EOF
 
-      - name: Create PR Review
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
+- name: Create PR Review
+  uses: actions/github-script@v7
+  with:
+      script: |
+          const fs = require('fs');
 
-            let comments = [];
-            try {
-              comments = JSON.parse(fs.readFileSync('filtered_comments.json', 'utf8'));
-            } catch (e) {}
+          let comments = [];
+          try {
+            comments = JSON.parse(fs.readFileSync('filtered_comments.json', 'utf8'));
+          } catch (e) {}
 
-            if (!comments.length) {
-              const raw = fs.readFileSync('review.json', 'utf8');
+          if (!comments.length) {
+            const raw = fs.readFileSync('review.json', 'utf8');
 
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: "🤖 AI 리뷰 (파싱 실패)\n\n" + raw
-              });
-              return;
-            }
-
-            await github.rest.pulls.createReview({
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number,
-              event: "COMMENT",
-              comments: comments.map(c => ({
-                path: c.file,
-                line: c.line,
-                body: "🤖 AI 코드 리뷰\n\n" + c.comment
-              }))
+              body: "🤖 AI 리뷰 (파싱 실패)\n\n" + raw
             });
+            return;
+          }
+
+          await github.rest.pulls.createReview({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number,
+            event: "COMMENT",
+            comments: comments.map(c => ({
+              path: c.file,
+              line: c.line,
+              body: "🤖 AI 코드 리뷰\n\n" + c.comment
+            }))
+          });
