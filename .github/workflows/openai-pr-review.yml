@@ -20,7 +20,7 @@ jobs:
       - name: Run OpenAI PR review
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: python3 .github/scripts/openai_pr_review.py
