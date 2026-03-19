@@ -45,6 +45,19 @@ def http_text(url, method="GET", headers=None, timeout=120):
         raise RuntimeError(f"{method} {url} failed: {e.code} {detail}")
 
 
+def github_json(url, method="GET", data=None):
+    return http_json(
+        url,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        },
+        data=data,
+        timeout=60,
+    )
+
+
 def fetch_pr_diff():
     return http_text(
         f"https://api.github.com/repos/{REPO}/pulls/{PR_NUMBER}",
@@ -179,10 +192,10 @@ def review_with_openai(diff_text):
     return json.loads(text)
 
 
-def build_summary(result):
+def build_body(result):
     issues = result.get("issues", [])
     if not issues:
-        return "## Unity PR 핵심 리뷰\n\n핵심 이슈 없음"
+        return f"{COMMENT_MARKER}\n## Unity PR 핵심 리뷰\n\n핵심 이슈 없음"
 
     severity_map = {
         "high": "높음",
@@ -190,7 +203,7 @@ def build_summary(result):
         "low": "낮음",
     }
 
-    lines = ["## Unity PR 핵심 리뷰", ""]
+    lines = [COMMENT_MARKER, "## Unity PR 핵심 리뷰", ""]
     summary = result.get("summary", "").strip()
     if summary and summary != "핵심 이슈 없음":
         lines.append(f"**요약:** {summary}")
@@ -209,12 +222,31 @@ def build_summary(result):
 def write_step_summary(body):
     summary_path = os.getenv("GITHUB_STEP_SUMMARY", "")
     if not summary_path:
-        print("[warn] GITHUB_STEP_SUMMARY not found")
         print(body)
         return
 
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(body + "\n")
+
+
+def upsert_comment(body):
+    list_url = f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100"
+    comments = github_json(list_url)
+
+    existing = None
+    for comment in comments:
+        if COMMENT_MARKER in comment.get("body", ""):
+            existing = comment
+            break
+
+    if existing:
+        github_json(existing["url"], method="PATCH", data={"body": body})
+    else:
+        github_json(
+            f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments",
+            method="POST",
+            data={"body": body},
+        )
 
 
 def main():
@@ -226,30 +258,24 @@ def main():
     cs_diff = extract_cs_diff(diff_text)
 
     if not cs_diff.strip():
-        write_step_summary("## Unity PR 핵심 리뷰\n\n리뷰 대상 C# 변경 없음")
+        body = f"{COMMENT_MARKER}\n## Unity PR 핵심 리뷰\n\n리뷰 대상 C# 변경 없음"
+        write_step_summary(body)
+        upsert_comment(body)
         return
 
     if len(cs_diff) > MAX_DIFF_CHARS:
         cs_diff = cs_diff[:MAX_DIFF_CHARS] + "\n\n[diff 일부 생략됨]"
 
     if not OPENAI_API_KEY:
-        write_step_summary("## Unity PR 핵심 리뷰\n\n리뷰 스킵: OPENAI_API_KEY 없음")
+        body = f"{COMMENT_MARKER}\n## Unity PR 핵심 리뷰\n\n리뷰 스킵: OPENAI_API_KEY 없음"
+        write_step_summary(body)
+        upsert_comment(body)
         return
 
-    try:
-        result = review_with_openai(cs_diff)
-    except Exception as e:
-        msg = str(e)
-        if "insufficient_quota" in msg:
-            write_step_summary("## Unity PR 핵심 리뷰\n\n리뷰 스킵: OpenAI API quota 부족")
-            return
-
-        write_step_summary("## Unity PR 핵심 리뷰\n\n리뷰 실패: OpenAI 호출 오류")
-        print(f"[warn] OpenAI review failed: {msg}")
-        return
-
-    body = build_summary(result)
+    result = review_with_openai(cs_diff)
+    body = build_body(result)
     write_step_summary(body)
+    upsert_comment(body)
 
 
 if __name__ == "__main__":
@@ -257,4 +283,4 @@ if __name__ == "__main__":
         main()
     except Exception as e:
         print(f"[error] {e}")
-        sys.exit(0)
+        sys.exit(1)
